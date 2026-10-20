@@ -1,0 +1,22 @@
+# Sobe API e interface. O Dgraph roda no compose dele (rede dgraph_default).
+services:
+  api:
+    build: ./api
+    environment:
+      ENVIRONMENT: production
+      WORKERS: 2
+      DGRAPH_URL: ${DGRAPH_URL:-http://dgraph-alpha:8080}
+    ports:
+      - "3081:8000"
+    networks: [default, dgraph]
+
+  web:
+    build: ./web
+    depends_on: [api]
+    ports:
+      - "3080:80"
+
+networks:
+  dgraph:
+    name: dgraph_default
+    external: true
