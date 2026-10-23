@@ -1,3 +1,5 @@
+from urllib.parse import quote
+
 from fastapi import Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -13,7 +15,8 @@ def _to_response(error: APIError) -> Response:
     return JSONResponse(
         error.to_dict(),
         status_code=error.status_code,
-        headers={"X-Error": error.message},
+        # Headers are latin-1; messages are pt-BR.
+        headers={"X-Error": quote(error.message)},
     )
 
 

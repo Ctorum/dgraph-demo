@@ -12,6 +12,7 @@ import {
   type NodeProps,
 } from '@xyflow/react'
 import { createContext, useContext, useEffect, useMemo, useRef } from 'react'
+import type { Connection } from '@xyflow/react'
 
 import type { GraphNode } from './api'
 import {
@@ -22,7 +23,8 @@ import {
   type Placed,
   type Point,
 } from './layout'
-import { QUERIES, actionsFor, type QueryKey } from './queries'
+import { DRAFT_ID, writeLabel, type WriteKey } from './drafts'
+import { QUERIES, type Db, type QueryKey } from './queries'
 
 /* Type vocabulary: every vertex class has a shape and a colour, and its name
    is always printed, so the type never depends on colour alone. */
@@ -40,6 +42,25 @@ const TYPES: Record<string, { shape: Shape; tone: string; mono?: boolean }> = {
   Categoria: { shape: 'diamond', tone: 'teal' },
   Classe: { shape: 'diamond', tone: 'green' },
   Individuo: { shape: 'circle', tone: 'blue' },
+  Dominio: { shape: 'hexagon', tone: 'green' },
+  TipoRelacao: { shape: 'diamond', tone: 'clay' },
+  Campo: { shape: 'square', tone: 'teal' },
+  Tipo: { shape: 'hexagon', tone: 'blue' },
+  Predicado: { shape: 'circle', tone: 'teal', mono: true },
+}
+
+const FALLBACK_SHAPES: Shape[] = ['circle', 'square', 'diamond', 'triangle']
+const FALLBACK_TONES = ['blue', 'green', 'amber', 'teal', 'clay']
+
+/** Kosmos domains are open-ended: the name picks a stable shape and tone. */
+function styleOf(type: string) {
+  if (TYPES[type]) return TYPES[type]
+  let hash = 0
+  for (const ch of type) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
+  return {
+    shape: FALLBACK_SHAPES[hash % FALLBACK_SHAPES.length],
+    tone: FALLBACK_TONES[(hash >>> 3) % FALLBACK_TONES.length],
+  }
 }
 
 const SHAPES: Record<Shape, string> = {
@@ -51,7 +72,7 @@ const SHAPES: Record<Shape, string> = {
 }
 
 export function Glyph({ type }: { type: string }) {
-  const style = TYPES[type] ?? { shape: 'circle', tone: 'ink' }
+  const style = styleOf(type)
   return (
     <svg
       className={`glyph tone-${style.tone}`}
@@ -63,10 +84,13 @@ export function Glyph({ type }: { type: string }) {
   )
 }
 
-/** Long hashes keep their head and tail: enough to compare by eye. */
+const count = new Intl.NumberFormat('pt-BR')
+
+/** Long hashes keep their head and tail: enough to compare by eye; names
+   get a CSS ellipsis and the full text in the tooltip. */
 function display(node: GraphNode) {
   const { label } = node
-  return label.length > 18 ? `${label.slice(0, 8)}…${label.slice(-4)}` : label
+  return TYPES[node.type]?.mono && label.length > 18 ? `${label.slice(0, 8)}…${label.slice(-4)}` : label
 }
 
 /* Graph-level callbacks, shared by every node without re-rendering them. */
@@ -76,6 +100,10 @@ export interface GraphActions {
   run: (query: QueryKey, node: GraphNode) => void
   expand: (groupKey: string) => void
   hover: (id: string | null) => void
+  actionsFor: (node: GraphNode) => QueryKey[]
+  writesFor: (node: GraphNode) => WriteKey[]
+  write: (kind: WriteKey, node: GraphNode) => void
+  db: Db
 }
 
 const Actions = createContext<GraphActions | null>(null)
@@ -84,6 +112,12 @@ type EntityData = {
   node: GraphNode
   selected: boolean
   menuOpen: boolean
+  /** Being edited or inactivated in the panel. */
+  editing: boolean
+  fresh: boolean
+  connectable: boolean
+  /** Live label of the draft node, typed in the panel. */
+  draftLabel?: string
 }
 type GroupData = { node: GraphNode; groupKey: string; hidden: number }
 type RouteData = {
@@ -92,14 +126,18 @@ type RouteData = {
   label: string
   showLabel: boolean
   lit: boolean
+  draft: boolean
 }
 
 function EntityNode({ data }: NodeProps<Node<EntityData>>) {
   const actions = useContext(Actions)!
-  const { node, selected, menuOpen } = data
-  const queries = actionsFor(node.type)
+  const { node, selected, menuOpen, editing, fresh, connectable, draftLabel } = data
+  const queries = actions.actionsFor(node)
+  const writes = actions.writesFor(node)
+  const hasMenu = queries.length + writes.length > 1 || (!queries.length && writes.length > 0)
   const menu = useRef<HTMLDivElement>(null)
   const risco = Number(node.props.risco ?? 0)
+  const isDraft = node.id === DRAFT_ID
 
   useEffect(() => {
     if (menuOpen) menu.current?.querySelector('button')?.focus()
@@ -107,16 +145,20 @@ function EntityNode({ data }: NodeProps<Node<EntityData>>) {
 
   return (
     <>
-      <Handle type="target" position={Position.Left} isConnectable={false} />
+      <Handle type="target" position={Position.Left} isConnectable={connectable} />
       <button
         type="button"
         className="node"
         data-role={node.role}
-        data-action={queries.length > 0}
+        data-action={queries.length > 0 || writes.length > 0}
+        data-editing={editing || undefined}
+        data-fresh={fresh || undefined}
+        data-inactive={node.props.status === 'inactive' || undefined}
         aria-pressed={selected}
-        aria-haspopup={queries.length > 1 ? 'menu' : undefined}
-        aria-expanded={queries.length > 1 ? menuOpen : undefined}
-        title={node.label}
+        aria-haspopup={hasMenu ? 'menu' : undefined}
+        aria-expanded={hasMenu ? menuOpen : undefined}
+        title={isDraft ? 'Rascunho: ainda não foi gravado' : node.label}
+        disabled={isDraft}
         onClick={() => actions.activate(node)}
         onMouseEnter={() => actions.hover(node.id)}
         onMouseLeave={() => actions.hover(null)}
@@ -127,20 +169,25 @@ function EntityNode({ data }: NodeProps<Node<EntityData>>) {
         <span className="node-text">
           <span className="node-type">{node.type}</span>
           <span className={TYPES[node.type]?.mono ? 'node-label mono' : 'node-label'}>
-            {display(node)}
+            {isDraft ? draftLabel || 'novo' : display(node)}
           </span>
         </span>
+        {isDraft && <span className="badge badge-draft">novo</span>}
+        {node.props.status === 'inactive' && <span className="badge">inativo</span>}
         {(risco >= 50 || node.props.bloqueado === true) && (
           <span className="badge badge-risk">
             {node.props.bloqueado === true ? 'bloqueado' : `risco ${risco}`}
           </span>
         )}
+        {node.props.instancias != null && (
+          <span className="badge">{count.format(Number(node.props.instancias))}</span>
+        )}
         {node.props.score != null && (
           <span className="badge">×{String(node.props.score)}</span>
         )}
       </button>
-      <Handle type="source" position={Position.Right} isConnectable={false} />
-      {queries.length > 1 && (
+      <Handle type="source" position={Position.Right} isConnectable={connectable} />
+      {hasMenu && (
         <NodeToolbar isVisible={menuOpen} position={Position.Bottom} offset={6}>
           <div className="node-menu" role="menu" ref={menu}>
             {queries.map((key) => (
@@ -151,6 +198,20 @@ function EntityNode({ data }: NodeProps<Node<EntityData>>) {
                 onClick={() => actions.run(key, node)}
               >
                 {QUERIES[key].title}
+              </button>
+            ))}
+            {queries.length > 0 && writes.length > 0 && (
+              <hr className="node-menu-sep" aria-hidden="true" />
+            )}
+            {writes.map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                role="menuitem"
+                className="node-menu-write"
+                onClick={() => actions.write(kind, node)}
+              >
+                {writeLabel(kind, actions.db)}
               </button>
             ))}
           </div>
@@ -186,7 +247,7 @@ const ARROW = 7
 
 /** Orthogonal ELK route with softened corners and a hand-drawn arrow. */
 function RouteEdge({ data }: EdgeProps<Edge<RouteData>>) {
-  const { points, labelAt, label, showLabel, lit } = data!
+  const { points, labelAt, label, showLabel, lit, draft } = data!
   const geometry = useMemo(() => {
     if (points.length < 2) return null
     const end = points[points.length - 1]
@@ -236,7 +297,7 @@ function RouteEdge({ data }: EdgeProps<Edge<RouteData>>) {
 
   if (!geometry) return null
   return (
-    <g className={lit ? 'route lit' : 'route'}>
+    <g className={['route', lit && 'lit', draft && 'draft'].filter(Boolean).join(' ')}>
       <path className="route-line" d={geometry.d} />
       <path className="route-arrow" d={geometry.arrow} />
       {showLabel && (
@@ -264,6 +325,12 @@ export interface GraphViewProps {
   hovered: string[]
   selected: string | null
   menuFor: string | null
+  editing: string | null
+  fresh: string | null
+  draftLabel: string
+  /** Whether a node can start or end a relation drawn by dragging. */
+  canConnect: (node: GraphNode) => boolean
+  onConnect: (source: GraphNode, target: GraphNode) => void
 }
 
 export function GraphView({
@@ -272,7 +339,13 @@ export function GraphView({
   hovered,
   selected,
   menuFor,
+  editing,
+  fresh,
+  draftLabel,
+  canConnect,
+  onConnect,
 }: GraphViewProps) {
+  const byId = useMemo(() => new Map(placed.nodes.map((p) => [p.node.id, p.node])), [placed])
   const lit = useMemo(() => {
     if (!hovered.length) return null
     const ids = new Set(hovered)
@@ -296,9 +369,17 @@ export function GraphView({
         className: lit && !lit.has(node.id) ? 'dim' : undefined,
         data: group
           ? { node, groupKey: group.key, hidden: group.hidden }
-          : { node, selected: selected === node.id, menuOpen: menuFor === node.id },
+          : {
+              node,
+              selected: selected === node.id,
+              menuOpen: menuFor === node.id,
+              editing: editing === node.id,
+              fresh: fresh === node.id,
+              connectable: canConnect(node),
+              draftLabel: node.id === DRAFT_ID ? draftLabel : undefined,
+            },
       })),
-    [placed, lit, selected, menuFor],
+    [placed, lit, selected, menuFor, editing, fresh, draftLabel, canConnect],
   )
 
   const edges = useMemo((): Edge[] => {
@@ -317,8 +398,9 @@ export function GraphView({
           points,
           labelAt,
           label: edgeLabel(edge),
-          showLabel: !crowded || touches,
+          showLabel: !crowded || touches || edge.props.draft === true,
           lit: touches,
+          draft: edge.props.draft === true,
         },
       }
     })
@@ -332,7 +414,30 @@ export function GraphView({
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         nodesDraggable={false}
-        nodesConnectable={false}
+        nodesConnectable
+        isValidConnection={(c) => {
+          const source = byId.get(c.source)
+          const target = byId.get(c.target)
+          return Boolean(
+            source && target && c.source !== c.target && canConnect(source) && canConnect(target),
+          )
+        }}
+        onConnect={(c: Connection) => {
+          const source = byId.get(c.source)
+          const target = byId.get(c.target)
+          if (source && target) onConnect(source, target)
+        }}
+        // Handles are small: dropping anywhere on a node also connects.
+        onConnectEnd={(event, state) => {
+          if (state.isValid || !state.fromNode) return
+          const point = 'changedTouches' in event ? event.changedTouches[0] : event
+          const id = document
+            .elementFromPoint(point.clientX, point.clientY)
+            ?.closest<HTMLElement>('.react-flow__node')?.dataset.id
+          const source = byId.get(state.fromNode.id)
+          const target = id ? byId.get(id) : undefined
+          if (source && target && source !== target && canConnect(target)) onConnect(source, target)
+        }}
         nodesFocusable={false}
         edgesFocusable={false}
         elementsSelectable={false}

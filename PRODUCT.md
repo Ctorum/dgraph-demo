@@ -20,6 +20,11 @@ dispositivo, o ciclo de transferências que volta à conta de origem, o caminho
 que leva a uma recomendação, a cadeia de superclasses de uma ontologia.
 Sucesso: quem usa sai entendendo a forma da conexão, não só a lista de IDs.
 
+Também escreve: cria e edita classes, domínios, campos, tipos de relação,
+instâncias, relações e types crus do Dgraph a partir do próprio grafo. O que
+está sendo criado aparece como rascunho no desenho, com a mutation exata ao
+lado; nada é apagado, só inativado, sempre com desfazer.
+
 ## Brand Personality
 
 Precisa, densa, sem enfeite. Ferramenta técnica que respeita quem a usa.

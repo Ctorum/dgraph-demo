@@ -67,3 +67,24 @@ def service_unavailable(error: Exception | None = None) -> APIError:
         detail=str(error),
         status_code=HTTPStatus.SERVICE_UNAVAILABLE,
     )
+
+
+def already_exists(obj: str = "Object") -> APIError:
+    return APIError(
+        message=f"{obj} already exists",
+        status_code=HTTPStatus.CONFLICT,
+    )
+
+
+def conflict(message: str, detail: str | None = None) -> APIError:
+    return APIError(
+        message=message, detail=detail, status_code=HTTPStatus.CONFLICT
+    )
+
+
+def unauthorized_error(detail: str | None = None) -> APIError:
+    return APIError(
+        message="Operation not allowed",
+        detail=detail,
+        status_code=HTTPStatus.FORBIDDEN,
+    )

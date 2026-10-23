@@ -69,7 +69,8 @@ function collapse(graph: GraphResult, expanded: Set<string>): Visible {
   const leaves = new Map<string, GraphNode[]>()
   for (const node of graph.nodes) {
     const edges = degree.get(node.id) ?? []
-    if (node.role === 'focus' || edges.length !== 1) continue
+    // The focus and the draft being written always stay visible.
+    if (node.role === 'focus' || node.role === 'draft' || edges.length !== 1) continue
     const other =
       edges[0].source === node.id ? edges[0].target : edges[0].source
     const key = `${other}|${node.type}`
@@ -143,7 +144,10 @@ const brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' 
 
 export function edgeLabel(edge: GraphEdge) {
   if (edge.props.valor != null) return brl.format(Number(edge.props.valor))
-  return edge.label.replaceAll('_', ' ')
+  // ◆ marks a relation: a node of its own in Dgraph, drawn as one edge.
+  const mark = edge.props.relacao ? '◆ ' : ''
+  if (edge.props.quantidade != null) return `${mark}${edge.label} ×${edge.props.quantidade}`
+  return mark + edge.label.replaceAll('_', ' ')
 }
 
 export async function place(

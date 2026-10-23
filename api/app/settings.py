@@ -38,6 +38,8 @@ class ServerSettings(Settings):
 class GraphSettings(Settings):
     DGRAPH_URL: str = "http://localhost:8080"
     DGRAPH_TIMEOUT: float = 10.0
+    # Writes (mutations and schema changes) go to the real database.
+    WRITE_ENABLED: bool = True
 
 
 server_settings = ServerSettings()

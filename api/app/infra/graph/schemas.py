@@ -32,7 +32,7 @@ class EdgeSchema(BaseModel):
 class GraphSchema[T](BaseModel):
     """Resultado de uma consulta: o subgrafo percorrido e a lista tabular."""
 
-    queries: list[str] = Field(description="Consultas OrientDB executadas")
+    queries: list[str] = Field(description="Consultas DQL executadas")
     nodes: list[NodeSchema]
     edges: list[EdgeSchema]
     items: list[T]
@@ -85,3 +85,30 @@ class GraphBuilder:
             edges=list(self.edges.values()),
             items=items,
         )
+
+
+class UndoSchema(BaseModel):
+    """The request that reverts a write, so the client can offer Desfazer."""
+
+    method: Literal["POST", "PUT", "PATCH", "DELETE"]
+    path: str
+    body: dict[str, Any] | None = None
+
+
+class WriteSchema(BaseModel):
+    """Result (or preview, with ``dry_run``) of a write."""
+
+    applied: bool
+    mutations: list[str] = Field(
+        description="Mutations JSON e DDL de schema, na ordem de execução"
+    )
+    queries: list[str] = Field(
+        description="Leituras feitas para montar a escrita"
+    )
+    node: str | None = Field(None, description="Nó do grafo escrito")
+    key: int | None = None
+    impacto: dict[str, int] = Field(
+        default_factory=dict,
+        description="O que sai das consultas junto (inativação)",
+    )
+    desfazer: UndoSchema | None = None

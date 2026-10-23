@@ -4,8 +4,10 @@ from fastapi import APIRouter, status
 
 from app.fraude.routes import router as fraude_router
 from app.infra.graph.adapter import GraphContext
+from app.kosmos.routes import router as kosmos_router
 from app.ontologia.routes import router as ontologia_router
 from app.recomendacao.routes import router as recomendacao_router
+from app.schema.routes import router as schema_router
 
 from .schemas import BaseResponseSchema, ErrorResponseSchema
 
@@ -40,4 +42,10 @@ router.include_router(
     prefix="/ontologia",
     tags=["Ontologia"],
     responses=responses,
+)
+router.include_router(
+    kosmos_router, prefix="/kosmos", tags=["Kosmos"], responses=responses
+)
+router.include_router(
+    schema_router, prefix="/schema", tags=["Schema"], responses=responses
 )

@@ -44,6 +44,17 @@ def get(client: TestClient, path: str) -> dict:
         ),
         ("/ontologia/classes/1/individuos", lambda d: len(d) == 86),
         ("/ontologia/individuos/101/relacoes", lambda d: len(d) > 0),
+        (
+            "/kosmos/mapa",
+            lambda d: d[0]["quantidade"] >= d[-1]["quantidade"],
+        ),
+        # Grupo Econômico (0x328517) and Grupo Gerdau (0x328c68).
+        ("/kosmos/dominios/3310871/modelo", lambda d: len(d) > 0),
+        ("/kosmos/dominios/3310871/instancias?limit=5", lambda d: len(d) == 5),
+        (
+            "/kosmos/instancias/3312744/conexoes",
+            lambda d: {"Membros do Grupo Econômico"} <= {c["via"] for c in d},
+        ),
     ],
 )
 def test_use_cases(client, path, expected):
@@ -76,3 +87,9 @@ def test_not_found(client):
     response = client.get("/fraude/clientes/999999/conexoes")
     assert response.status_code == 404
     assert response.json()["message"] == "Cliente 999999 not found"
+
+
+def test_queries_run_as_shown(client):
+    """What the panel shows must run in Ratel: no $variables left."""
+    data = get(client, "/kosmos/instancias/3312744/conexoes")
+    assert not any("$" in q for q in data["queries"])
